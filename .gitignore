@@ -1,1 +1,4 @@
 .venv
+calibration.json
+virtual_piano/
+__pycache__/
