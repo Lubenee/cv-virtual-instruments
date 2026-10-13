@@ -10,6 +10,7 @@ HandLandmarkerOptions = mp.tasks.vision.HandLandmarkerOptions
 VisionRunningMode = mp.tasks.vision.RunningMode
 FINGERTIP_LANDMARKS = [4, 8, 12, 16, 20]
 LANDMARKER_MODEL_PATH = Path(__file__).with_name("hand_landmarker.task")
+DEFAULT_SETTINGS = (.5, .5, .5)
 
 # Connections between the 21 hand landmarks
 HAND_CONNECTIONS = [
@@ -22,7 +23,7 @@ HAND_CONNECTIONS = [
 ]
 
 class Landmarker:
-    def __init__(self, settings):
+    def __init__(self, settings=DEFAULT_SETTINGS):
         if not LANDMARKER_MODEL_PATH.exists():
             raise FileNotFoundError(f"Hand Landmarker model not found: {LANDMARKER_MODEL_PATH}")
         self._settings = tuple(settings)
@@ -68,14 +69,10 @@ class Landmarker:
             # Print index fingertip coordinates on screen
             if draw_fingertip_coords:
                 index_x, index_y = points[8]
-                cv2.putText(
-                    frame,
-                    f"Index: ({index_x}, {index_y})",
+                cv2.putText(frame, f"({index_x}, {index_y})",
                     (index_x + 10, index_y - 10),
                     cv2.FONT_HERSHEY_SIMPLEX,
-                    0.5,
-                    (255, 255, 255),
-                    2
+                    0.5, (255, 255, 255), 2
                 )
 
     def close(self):
@@ -109,7 +106,7 @@ class Landmarker:
         )
 
         return HandLandmarker.create_from_options(options)
-
+    
 ############################################
 ## C++ class equivalents cuz im retarded
 # lassName() constructor	__init__(self) initializer
