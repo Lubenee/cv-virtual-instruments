@@ -42,39 +42,6 @@ class Landmarker:
             self._landmarker = self._create_landmarker(new_settings)
             self._settings = new_settings
             
-    def draw_landmarks(self, frame, result, draw_hand_skeleton=False, draw_fingertips_only=True, draw_fingertip_coords=True):
-        height, width = frame.shape[:2]
-
-        for hand in result.hand_landmarks:
-            # Convert normalized coordinates to pixels
-            points = [(int(lm.x * width), int(lm.y * height)) for lm in hand]
-
-            # Draw hand skeleton
-            if draw_hand_skeleton:
-                for start, end in HAND_CONNECTIONS:
-                    cv2.line(frame, points[start], points[end], BGR_GREEN, 1)
-
-            # Draw all landmarks
-            for i, point in enumerate(points):
-                color = BGR_BLACK
-                fingertip_landmark = i in FINGERTIP_LANDMARKS
-                if fingertip_landmark:
-                    color = BGR_RED
-                else: 
-                    color = BGR_BLUE
-                
-                if fingertip_landmark or not draw_fingertips_only:
-                    cv2.circle(frame, point, 5, color, -1)
-
-            # Print index fingertip coordinates on screen
-            if draw_fingertip_coords:
-                index_x, index_y = points[8]
-                cv2.putText(frame, f"({index_x}, {index_y})",
-                    (index_x + 10, index_y - 10),
-                    cv2.FONT_HERSHEY_SIMPLEX,
-                    0.5, (255, 255, 255), 2
-                )
-
     def close(self):
         self._landmarker.close()
 
