@@ -31,26 +31,26 @@ def detector():
     max = 255
     threshold = 240
     ret, thresh = cv2.threshold(gaussian, threshold,max,cv2.THRESH_BINARY)
-    # cv2.imshow("thresh", thresh)
-    
     ret, thresh_inv = cv2.threshold(gaussian, threshold, max, cv2.THRESH_BINARY_INV)
-    # cv2.imshow("thresh_inv", thresh_inv)
     
     # otsu algorithm applies it's own threshold, so this 0 is actually ignored.
     otsu_thresh_val, thresh_otsu = cv2.threshold(gaussian, 0, max, cv2.THRESH_OTSU)
     otsu_thresh_val, thresh_otsu_inv = cv2.threshold(gaussian, 0, max, cv2.THRESH_OTSU | cv2.THRESH_BINARY_INV)
     
-    print("Otsu thresh val: ", otsu_thresh_val)
-    # cv2.imshow("thresh_otsu", thresh_otsu)
+    # Select a horizontal strip containing the black keys
+    H, W = thresh_otsu_inv.shape # image width and height
+    y1 = int(H * 0.40)
+    y2 = int(H * 0.55)
+    x1 = int (W * 0.15)
+    x2 = int (W * 0.9)
+    roi = thresh_otsu_inv[y1:y2, x1:x2].copy()
     
     ##############################
     ## Morphological transforms ##
     ##############################
     # https://docs.opencv.org/4.13.0/d9/d61/tutorial_py_morphological_ops.html?utm_source=chatgpt.com
-    kernel = np.ones((6,6),np.uint8)
-    opening_org = cv2.morphologyEx(thresh_otsu, cv2.MORPH_OPEN, kernel)
-    opening_inv = cv2.morphologyEx(thresh_otsu_inv, cv2.MORPH_OPEN, kernel)
-    # cv2.imshow('opening_org', opening1)
+    kernel = np.ones((3,3),np.uint8)
+    opening_inv = cv2.morphologyEx(roi, cv2.MORPH_OPEN, kernel)
     cv2.imshow('opening_inv', opening_inv)
     
     ############################
@@ -61,31 +61,43 @@ def detector():
     # RETR_EXTERNAL	Retrieves only outermost contours
     # RETR_LIST	Retrieves all contours without preserving their hierarchy
     # RETR_TREE	Retrieves all contours and builds a parent-child hierarchy
-    contours1, _ = cv2.findContours(opening_org, cv2.RETR_LIST, cv2.CHAIN_APPROX_SIMPLE)
-    contours2, _ = cv2.findContours(opening_inv, cv2.RETR_LIST, cv2.CHAIN_APPROX_SIMPLE)
-    print("Contours found: ", len(contours1))
-    index = -1
-    thickness = 1
-    # cv2.drawContours(img, contours1, index, BGR_GREEN, thickness)
+    contours, _ = cv2.findContours(opening_inv, cv2.RETR_LIST, cv2.CHAIN_APPROX_SIMPLE)
+    print("Contours found: ", len(contours))
     # cv2.drawContours(img, contours2, index, BGR_GREEN, thickness)
     
-    img1 = img.copy()
-    img2 = img.copy()
-    for cnt in contours1:
-        x,y,w,h = cv2.boundingRect(cnt)
-        cv2.rectangle(img1,(x,y),(x+w,y+h),BGR_RED,thickness)
-        # cv2.rectangle(thresh_inv,(x,y),(x+w,y+h),BGR_RED,thickness)
-        
-    for cnt in contours2:
-        x,y,w,h = cv2.boundingRect(cnt)
-        cv2.rectangle(img2,(x,y),(x+w,y+h),BGR_BLUE,thickness)
-        # cv2.rectangle(thresh,(x,y),(x+w,y+h),BGR_RED,thickness)
+    result = img.copy()
+    detected = 0
+    for cnt in contours:
+        x, y, w, h = cv2.boundingRect(cnt)
+        area = cv2.contourArea(cnt)
+
+        # Reject short objects
+        if h < 0.35 * roi.shape[0]:
+            continue
+        # Reject objects that aren't tall and narrow
+        if h < 1.3 * w:
+            continue
+        # Reject objects that don't fill their bounding rectangle
+        if area < 0.5 * w * h:
+            continue
+        # Convert ROI coordinates back to original image coordinates
+        cv2.rectangle(
+            result,
+            (x + x1, y + y1),
+            (x + x1 + w, y + y1 + h),
+            (0, 255, 0),
+            2
+        )
+
+        detected += 1
     
+    print("Potential black keys:", detected)
     # cv2.imshow("thresh", thresh_otsu)
     cv2.imshow("thresh_inv", thresh_otsu_inv)
     
     # cv2.imshow("img_thresh", img1)
-    cv2.imshow("img_thresh_inv", img2)
+    cv2.imshow("ROI Mask", opening_inv)
+    cv2.imshow("Detected Black Keys", result)
     
     # cv2.imshow("Original", img)
     cv2.imshow
