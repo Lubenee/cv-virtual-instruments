@@ -64,11 +64,7 @@ class App:
         # overlay.draw_landmarks(frame, result, True, True, True)
         # self.settings_panel.draw(frame)
         
-        selected_quad = self.keyboard_detector.get_selected_quad()
-        if selected_quad is not None and len(selected_quad) != 0:
-            for point in selected_quad:
-                cv2.circle(frame, point, 8, BGR_PURPLE, 4)
-        
+        overlay.draw_calibration_points(frame, self.keyboard_detector.get_selected_quad())
         if self.show_help:
             h = frame.shape[0]
             overlay.draw_text_lines(frame, HELP, origin=(10, h - 40 - 22 * len(HELP)))
@@ -78,7 +74,7 @@ class App:
         cv2.imshow(WINDOW, frame)
         
     def _poll_events(self):
-        key = cv2.waitKey(20) & 0xFF
+        key = cv2.waitKey(30) & 0xFF
         if key == ord('q') or key == 27: # q or esc
             return False
         elif key == ord('f'):

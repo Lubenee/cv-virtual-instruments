@@ -95,9 +95,11 @@ def draw_rec_indicator(frame, elapsed):
                 (0, 0, 255), 2, cv2.LINE_AA)
 
 def draw_calibration_points(frame, points):
+    if points is None or len(points) == 0:
+        return
     for i, (x, y) in enumerate(points):
-        cv2.circle(frame, (int(x), int(y)), 7, (0, 0, 255), -1)
-        cv2.putText(frame, str(i + 1), (int(x) + 10, int(y) - 10), FONT, 0.7,
-                    (0, 0, 255), 2, cv2.LINE_AA)
+        cv2.circle(frame, (x,y), 7, BGR_PURPLE, -1)
+        cv2.putText(frame, str(i + 1), (x + 10, y - 10), FONT, 0.7, BGR_PURPLE, 2, cv2.LINE_AA)
     if len(points) > 1:
-        cv2.polylines(frame, [np.int32(points)], len(points) == 4, (0, 0, 255), 2)
+        cv2.polylines(frame, [np.int32(points)], len(points) == 4, BGR_PURPLE, 2)
+        
