@@ -3,7 +3,7 @@ from pathlib import Path
 from hand_detection import Landmarker
 import overlay
 from settings_panel import SettingsPanel
-from constants import HELP, HELP, WINDOW
+from constants import *
 import cv2
 
 from settings_panel import SettingsPanel
@@ -12,12 +12,12 @@ ALL_FINGERS = ("thumb", "index", "middle", "ring", "pinky")
 
 class App:
     def __init__(self):
-        self.keyboard = None
-        self.calibration = None
-        self.status, self.status_until = "", 0.0
         self.show_help = True
         self.flip_frame = False
         self.fps = 0.0
+        self.frame_count = 0
+        self.last_fps_time = time.perf_counter()
+        
         self.frame_size = (640, 480)
         
         self.landmarker = Landmarker()
@@ -43,10 +43,18 @@ class App:
             
         finally:
             cap.release()
-            self.landmarker.close()
-            cv2.destroyAllWindows()
+            self._release()
     
-    def _update(self): pass
+    def _update(self):
+        self.frame_count += 1
+        current_time = time.perf_counter()
+        elapsed = current_time - self.last_fps_time
+    
+        if elapsed >= 1.0:
+            self.fps = self.frame_count / elapsed
+    
+            self.frame_count = 0
+            self.last_fps_time = current_time
     
     def _draw(self, frame):
         if self.flip_frame: frame = cv2.flip(frame, 1)
@@ -56,8 +64,8 @@ class App:
         
         if self.show_help:
             h = frame.shape[0]
-            overlay.draw_text_lines(frame, HELP, origin=(10, h - 30 - 22 * len(HELP)), scale=0.5, color=(200, 255, 200))
-        
+            overlay.draw_text_lines(frame, HELP, origin=(10, h - 30 - 22 * len(HELP)), scale=0.5, color=BGR_WILLOW)
+        overlay.draw_text_lines(frame, [f"FPS: {self.fps:.1f}"], origin=(20, 20), scale=0.5, color=BGR_WILLOW)
         cv2.imshow(WINDOW, frame)
         
     def _poll_events(self):
@@ -69,3 +77,7 @@ class App:
         elif key == ord('h'):
             self.show_help = not self.show_help
         return True
+    
+    def _release(self):
+        self.landmarker.close()
+        cv2.destroyAllWindows()
