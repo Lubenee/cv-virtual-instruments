@@ -47,14 +47,12 @@ class Landmarker:
 
     def detect_for_video(self, frame):
         rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-
         mp_image = mp.Image(
             image_format=mp.ImageFormat.SRGB,
             data=rgb_frame
         )
 
         timestamp_ms = int((time.monotonic() - self._start_time) * 1000)
-
         return self._landmarker.detect_for_video(mp_image, timestamp_ms)
 
     @staticmethod
