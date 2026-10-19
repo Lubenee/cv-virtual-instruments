@@ -7,6 +7,7 @@ from constants import *
 import cv2
 
 from settings_panel import SettingsPanel
+from keyboard_detector import KeyboardDetector
 
 ALL_FINGERS = ("thumb", "index", "middle", "ring", "pinky")
 
@@ -22,11 +23,12 @@ class App:
         
         self.landmarker = Landmarker()
         self.settings_panel = SettingsPanel(self.landmarker)
+        self.keyboard_detector = KeyboardDetector()
 
     # ------------------------------------------------------------------
     def run(self):
         cv2.namedWindow(WINDOW)
-        cv2.setMouseCallback(WINDOW, self.settings_panel.on_mouse)
+        cv2.setMouseCallback(WINDOW, self._on_mouse)
         
         cap = cv2.VideoCapture(0)
         if not cap.isOpened():
@@ -55,29 +57,42 @@ class App:
     
             self.frame_count = 0
             self.last_fps_time = current_time
-    
+            
     def _draw(self, frame):
         if self.flip_frame: frame = cv2.flip(frame, 1)
-        result = self.landmarker.detect_for_video(frame)
-        overlay.draw_landmarks(frame, result, True, True, True)
-        self.settings_panel.draw(frame)
+        # result = self.landmarker.detect_for_video(frame)
+        # overlay.draw_landmarks(frame, result, True, True, True)
+        # self.settings_panel.draw(frame)
+        
+        selected_quad = self.keyboard_detector.get_selected_quad()
+        if selected_quad is not None and len(selected_quad) != 0:
+            for point in selected_quad:
+                cv2.circle(frame, point, 8, BGR_PURPLE, 4)
         
         if self.show_help:
             h = frame.shape[0]
-            overlay.draw_text_lines(frame, HELP, origin=(10, h - 30 - 22 * len(HELP)), scale=0.5, color=BGR_WILLOW)
-        overlay.draw_text_lines(frame, [f"FPS: {self.fps:.1f}"], origin=(20, 20), scale=0.5, color=BGR_WILLOW)
+            overlay.draw_text_lines(frame, HELP, origin=(10, h - 40 - 22 * len(HELP)))
+        if self.keyboard_detector.manual_calibration:
+            overlay.draw_text_lines(frame, ["Input a quad!"], origin=(20, 80), scale=1.2, color=BGR_PINK)    
+        overlay.draw_text_lines(frame, [f"FPS: {self.fps:.1f}"], origin=(20, 30))
         cv2.imshow(WINDOW, frame)
         
     def _poll_events(self):
-        key = cv2.waitKey(30) & 0xFF
+        key = cv2.waitKey(20) & 0xFF
         if key == ord('q') or key == 27: # q or esc
             return False
         elif key == ord('f'):
             self.flip_frame = not self.flip_frame
         elif key == ord('h'):
             self.show_help = not self.show_help
+        elif key == ord('c'):
+            self.keyboard_detector.set_manual_calibration(not self.keyboard_detector.manual_calibration)
         return True
     
+    def _on_mouse(self, event, x, y, flags, param):
+        # self.settings_panel.on_mouse(event,x,y,flags,param)
+        self.keyboard_detector.on_mouse(event,x,y,flags,param)
+        
     def _release(self):
         self.landmarker.close()
         cv2.destroyAllWindows()

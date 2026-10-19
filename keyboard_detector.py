@@ -2,6 +2,8 @@ import cv2
 from constants import *
 import numpy as np
 
+#! TODO: Use 4 points from user input as a starting quad
+#! TODO: Also add automatic detection, try finding a few quad candidates
 def detector():
     img = cv2.imread("synth.jpeg")
 
@@ -37,6 +39,10 @@ def detector():
     otsu_thresh_val, thresh_otsu = cv2.threshold(gaussian, 0, max, cv2.THRESH_OTSU)
     otsu_thresh_val, thresh_otsu_inv = cv2.threshold(gaussian, 0, max, cv2.THRESH_OTSU | cv2.THRESH_BINARY_INV)
     
+    ######################################
+    ### Get a ROI - region of interest ###
+    ######################################
+    
     # Select a horizontal strip containing the black keys
     H, W = thresh_otsu_inv.shape # image width and height
     y1 = int(H * 0.40)
@@ -44,6 +50,7 @@ def detector():
     x1 = int (W * 0.15)
     x2 = int (W * 0.9)
     roi = thresh_otsu_inv[y1:y2, x1:x2].copy()
+    
     
     ##############################
     ## Morphological transforms ##
@@ -104,6 +111,37 @@ def detector():
     cv2.waitKey(0)
     cv2.destroyAllWindows()
     
+class KeyboardDetector:
+    def __init__(self):
+        self._manual_calibration = False
+        self.selected_corners = []
+        
+    @property
+    def manual_calibration(self):
+        return self._manual_calibration
+
+    def set_manual_calibration(self, value):
+        if value:
+            self.selected_corners = []
+            self._manual_calibration = True
+        else:
+            self._manual_calibration = False
+        
+    def get_selected_quad(self):
+        return self.selected_corners
+        
+    def on_mouse(self, event, x, y, flags, param):
+        if not self.manual_calibration:
+            return
+        if (event == cv2.EVENT_LBUTTONDOWN):
+            self.selected_corners.append((x,y))
+            
+            if (len(self.selected_corners) >= 4):
+                self._manual_calibration = False
+                
+
+        
+
 
 #####################################################
 # # Read video from file system/camera
