@@ -64,17 +64,19 @@ class App:
         # overlay.draw_landmarks(frame, result, True, True, True)
         # self.settings_panel.draw(frame)
         
+        # Detect & draw the keyboard first, while the frame is still clean
+        self.keyboard_detector.draw_keyboard(frame)
         overlay.draw_calibration_points(frame, self.keyboard_detector.get_selected_quad())
         if self.show_help:
             h = frame.shape[0]
             overlay.draw_text_lines(frame, HELP, origin=(10, h - 40 - 22 * len(HELP)))
         if self.keyboard_detector.manual_calibration:
-            overlay.draw_text_lines(frame, ["Input a quad!"], origin=(20, 80), scale=1.2, color=BGR_PINK)    
+            overlay.draw_text_lines(frame, ["Input a quad!"], origin=(20, 80), scale=1.2, color=BGR_PINK)
         overlay.draw_text_lines(frame, [f"FPS: {self.fps:.1f}"], origin=(20, 30))
         cv2.imshow(WINDOW, frame)
         
     def _poll_events(self):
-        key = cv2.waitKey(30) & 0xFF
+        key = cv2.waitKey(1) & 0xFF 
         if key == ord('q') or key == 27: # q or esc
             return False
         elif key == ord('f'):
