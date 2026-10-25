@@ -1,6 +1,7 @@
 import cv2
 from constants import *
 import numpy as np
+from cv2.typing import MatLike
 
 #! TODO: Use 4 points from user input as a starting quad
 #! TODO: Also add automatic detection, try finding a few quad candidates
@@ -114,7 +115,16 @@ def detector():
 class KeyboardDetector:
     def __init__(self):
         self._manual_calibration = False
-        self.selected_corners = []
+        self.selected_corners: list[tuple[float, float]] = []
+        # Black keys found in the last frame, as (x, y, w, h) boxes in ROI coordinates
+        self.black_keys: list[tuple[int, int, int, int]] = []
+        # The perspective transform only depends on the corners, so we cache it
+        self._roi_cache_key = None
+        self._roi_corners = None     # ordered corners: TL, TR, BR, BL
+        self._roi_size = None        # (width, height) of the flattened ROI
+        self._roi_M = None           # frame -> ROI
+        self._roi_M_inv = None       # ROI -> frame
+        self._roi_window_open = False
         
     @property
     def manual_calibration(self):
@@ -139,10 +149,47 @@ class KeyboardDetector:
             if (len(self.selected_corners) >= 4):
                 self._manual_calibration = False
                 
+    def _ordered_corners(self) -> np.ndarray:
+        """Return the 4 clicked corners as TL, TR, BR, BL - whatever order they were clicked in."""
+        pts = np.array(self.selected_corners, dtype=np.float32)
+        # Sort the points by their angle around the center -> clockwise order on screen
+        # (clockwise because the image y axis points down)
+        center = pts.mean(axis=0)
+        angles = np.arctan2(pts[:, 1] - center[1], pts[:, 0] - center[0])
+        pts = pts[np.argsort(angles)]
+        # Rotate the list so it starts at the top-left corner (smallest x + y)
+        start = int(np.argmin(pts.sum(axis=1)))
+        return np.roll(pts, -start, axis=0)
 
-        
+    def extract_roi(self, frame: MatLike):
+        """
+            Cut the selected quad out of the frame and flatten it ("bird's-eye view").
+            https://stackoverflow.com/questions/75336140/generating-bird-eye-view-of-image-in-opencvpython-without-knowing-exact-positi
+        """
+        if len(self.selected_corners) != 4:
+            raise ValueError("Exactly 4 corners must be selected.")
 
+        # The transform only changes when the corners change -> compute it once
+        cache_key = tuple(self.selected_corners)
+        if cache_key != self._roi_cache_key:
+            corners = self._ordered_corners()
+            if not cv2.isContourConvex(corners.reshape(-1, 1, 2)):
+                raise ValueError("The 4 corners don't form a convex shape.")
+            tl, tr, br, bl = corners
+            # Output size: the longest of each pair of opposite edges keeps the most detail
+            width = int(round(max(np.linalg.norm(tr - tl), np.linalg.norm(br - bl))))
+            height = int(round(max(np.linalg.norm(bl - tl), np.linalg.norm(br - tr))))
+            if width < 20 or height < 20:
+                raise ValueError("The selected area is too small.")
+            dst = np.float32([[0, 0], [width - 1, 0], [width - 1, height - 1], [0, height - 1]])
+            self._roi_M = cv2.getPerspectiveTransform(corners, dst)
+            self._roi_M_inv = np.linalg.inv(self._roi_M)
+            self._roi_corners = corners
+            self._roi_size = (width, height)
+            self._roi_cache_key = cache_key
 
+        roi = cv2.warpPerspective(frame, self._roi_M, self._roi_size)
+        return roi, self._roi_M_inv
 #####################################################
 # # Read video from file system/camera
 # video = cv2.VideoCapture(0)
