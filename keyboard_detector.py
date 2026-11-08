@@ -203,7 +203,7 @@ class KeyboardDetector:
             cv2.destroyWindow(ROI_WINDOW)
             self._roi_window_open = False
 
-    def _detect_white_keys(self, blur: MatLike, black_keys, my: int) -> list[tuple[int, int, int, int]]:
+    def _detect_white_keys(self, blur: MatLike, black_keys, my: int, key_thresh: float) -> list[tuple[int, int, int, int]]:
         H, W = blur.shape[:2]
 
         centers = [x + w / 2 for x, _, w, _ in black_keys]
@@ -242,7 +242,7 @@ class KeyboardDetector:
         typical = np.median([profile[p] for p in peaks])
         gaps = sorted(p for p in peaks if profile[p] >= 0.15 * typical)
 
-        _, bright = cv2.threshold(strip, 0, 255, cv2.THRESH_BINARY | cv2.THRESH_OTSU)
+        _, bright = cv2.threshold(strip, key_thresh, 255, cv2.THRESH_BINARY)
         bright_cols = np.flatnonzero((bright > 0).mean(axis=0) > 0.5)
         if len(bright_cols) == 0:
             return []
@@ -298,7 +298,7 @@ class KeyboardDetector:
         # Apply a gaussian blur to remove some noise
         blur = cv2.GaussianBlur(imgray, (5, 5), 1)
         # Apply an otsu threshold & invert the image (black keys -> white).
-        _, thresh_otsu_inv = cv2.threshold(blur, 0, 255, cv2.THRESH_BINARY_INV | cv2.THRESH_OTSU)
+        otsu_val, thresh_otsu_inv = cv2.threshold(blur, 0, 255, cv2.THRESH_BINARY_INV | cv2.THRESH_OTSU)
 
         # Clear a thin band along the ROI border. Clicked corners are never pixel-perfect,
         # and a sliver of dark case/table at the edge glues all black keys into one blob.
@@ -339,7 +339,7 @@ class KeyboardDetector:
             black_keys.append((x, y, w, h))
         black_keys.sort(key=lambda key: key[0])  # left to right
         self.black_keys = black_keys
-        self.white_keys = self._detect_white_keys(blur, black_keys, my)
+        self.white_keys = self._detect_white_keys(blur, black_keys, my, otsu_val)
 
         ########################
         ####### Drawing ########
@@ -351,7 +351,7 @@ class KeyboardDetector:
 
         # draw outlines: white keys first, so the black keys end up on top of them
         cv2.polylines(frame, [quad], True, BGR_WILLOW, 2, cv2.LINE_AA)
-        cv2.polylines(frame, white_polys, True, BGR_YELLOW, 1, cv2.LINE_AA)
+        cv2.polylines(frame, white_polys, True, BGR_BLUE, 2, cv2.LINE_AA)
         cv2.polylines(frame, black_polys, True, BGR_GREEN, 2, cv2.LINE_AA)
 
         
