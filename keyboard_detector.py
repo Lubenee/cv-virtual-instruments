@@ -33,7 +33,7 @@ def detector():
     # otherwise it is set to a maximum value.
     max = 255
     threshold = 240
-    ret, thresh = cv2.threshold(gaussian, threshold,max,cv2.THRESH_BINARY)
+    ret, thresh = cv2.threshold(gaussian, threshold, max,cv2.THRESH_BINARY)
     ret, thresh_inv = cv2.threshold(gaussian, threshold, max, cv2.THRESH_BINARY_INV)
     
     # otsu algorithm applies it's own threshold, so this 0 is actually ignored.
@@ -93,7 +93,7 @@ def detector():
             result,
             (x + x1, y + y1),
             (x + x1 + w, y + y1 + h),
-            (0, 255, 0),
+            BGR_GREEN,
             2
         )
 
@@ -117,6 +117,8 @@ class KeyboardDetector:
         self.selected_corners: list[tuple[float, float]] = []
         # Black keys found in the last frame, as (x, y, w, h) boxes in ROI coordinates
         self.black_keys: list[tuple[int, int, int, int]] = []
+        # White keys found in the last frame, as (x, y, w, h) boxes in ROI coordinates
+        self.white_keys: list[tuple[int, int, int, int]] = []
         # The perspective transform only depends on the corners, so we cache it
         self._roi_cache_key = None
         self._roi_corners = None     # ordered corners: TL, TR, BR, BL
@@ -201,14 +203,82 @@ class KeyboardDetector:
             cv2.destroyWindow(ROI_WINDOW)
             self._roi_window_open = False
 
+    def _detect_white_keys(self, blur: MatLike, black_keys, my: int) -> list[tuple[int, int, int, int]]:
+        H, W = blur.shape[:2]
+
+        centers = [x + w / 2 for x, _, w, _ in black_keys]
+        if len(centers) >= 3:
+            key_w = float(np.percentile(np.diff(centers), 25))
+        else:
+            key_w = None
+
+        if black_keys:
+            black_bottom = int(np.median([y + h for _, y, _, h in black_keys]))
+        else:
+            black_bottom = int(0.6 * H) 
+        y_top = black_bottom + max(2, int(0.05 * H))
+        y_bottom = H - my 
+        if y_bottom - y_top < 3:
+            return []
+        strip = blur[y_top:y_bottom, :]
+
+        kw = int(0.5 * key_w) if key_w else W // 60
+        kw = max(5, kw | 1)  # odd and at least 5 px
+        blackhat = cv2.morphologyEx(strip, cv2.MORPH_BLACKHAT, np.ones((1, kw), np.uint8))
+        profile = blackhat.mean(axis=0)
+        profile = cv2.GaussianBlur(profile.reshape(1, -1), (1, 3), 0).ravel()  # smooth it a bit
+
+        min_dist = int(0.6 * key_w) if key_w else max(5, W // 80)
+        base = np.median(profile)
+        noise = base + 4 * np.median(np.abs(profile - base)) + 3  # +3 gray levels: camera noise
+        peaks = []
+        for i in np.argsort(profile)[::-1]:
+            if profile[i] < noise:
+                break
+            if all(abs(i - p) >= min_dist for p in peaks):
+                peaks.append(int(i))
+        if not peaks:
+            return []
+        typical = np.median([profile[p] for p in peaks])
+        gaps = sorted(p for p in peaks if profile[p] >= 0.15 * typical)
+
+        _, bright = cv2.threshold(strip, 0, 255, cv2.THRESH_BINARY | cv2.THRESH_OTSU)
+        bright_cols = np.flatnonzero((bright > 0).mean(axis=0) > 0.5)
+        if len(bright_cols) == 0:
+            return []
+        left, right = int(bright_cols[0]), int(bright_cols[-1]) + 1
+        edges = [left] + [g for g in gaps if left + min_dist / 2 < g < right - min_dist / 2] + [right]
+
+        widths = np.diff(edges)
+        if len(widths) == 0:
+            return []
+        if key_w is None:
+            key_w = float(np.median(widths))
+        white_keys = []
+        for x_a, x_b in zip(edges[:-1], edges[1:]):
+            w = x_b - x_a
+            if (bright[:, x_a:x_b] > 0).mean() < 0.6:
+                continue
+            # A missed (faint) gap leaves two keys glued together -> split them back in half.
+            # Anything else that doesn't have a key's width is a sliver, the case or the table.
+            n = 2 if abs(w / 2 - key_w) < 0.3 * key_w else 1
+            if not (0.5 * key_w <= w / n <= 1.6 * key_w):
+                continue
+            for j in range(n):
+                xa = x_a + round(j * w / n)
+                xb = x_a + round((j + 1) * w / n)
+                white_keys.append((xa, 0, xb - xa, H))
+        return white_keys
+
     def draw_keyboard(self, frame: MatLike):
-        """Detect the black keys inside the selected quad and draw them on the frame.
+        """Detect the black and white keys inside the selected quad and draw them on the frame.
 
         Call this on a clean frame, before other overlays are drawn on it,
         otherwise text/markers inside the quad get detected as keys.
         """
         if len(self.selected_corners) != 4:
             self.black_keys = []
+            self.white_keys = []
             self._close_roi_window()
             return
         # Cut out a flattened ROI from the user markings
@@ -216,6 +286,7 @@ class KeyboardDetector:
             roi, M_inv = self.extract_roi(frame)
         except ValueError as err:
             self.black_keys = []
+            self.white_keys = []
             self._close_roi_window()
             cv2.putText(frame, f"{err} Press 'c' to try again.", (20, frame.shape[0] - 20),
                         cv2.FONT_HERSHEY_SIMPLEX, 0.6, BGR_RED, 2, cv2.LINE_AA)
@@ -268,17 +339,20 @@ class KeyboardDetector:
             black_keys.append((x, y, w, h))
         black_keys.sort(key=lambda key: key[0])  # left to right
         self.black_keys = black_keys
+        self.white_keys = self._detect_white_keys(blur, black_keys, my)
 
         ########################
         ####### Drawing ########
         ########################
         # ROI boxes -> polygons in the frame.
-        key_polys = [self._roi_box_to_frame(b, M_inv) for b in black_keys]
+        white_polys = [self._roi_box_to_frame(b, M_inv) for b in self.white_keys]
+        black_polys = [self._roi_box_to_frame(b, M_inv) for b in black_keys]
         quad = np.int32(np.round(self._roi_corners))
 
-        # draw outlines on top
+        # draw outlines: white keys first, so the black keys end up on top of them
         cv2.polylines(frame, [quad], True, BGR_WILLOW, 2, cv2.LINE_AA)
-        cv2.polylines(frame, key_polys, True, BGR_GREEN, 2, cv2.LINE_AA)
+        cv2.polylines(frame, white_polys, True, BGR_YELLOW, 1, cv2.LINE_AA)
+        cv2.polylines(frame, black_polys, True, BGR_GREEN, 2, cv2.LINE_AA)
 
         
 #####################################################
