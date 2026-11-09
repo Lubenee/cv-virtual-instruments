@@ -2,6 +2,8 @@ import cv2
 from constants import *
 import numpy as np
 from cv2.typing import MatLike
+import overlay
+from keyboard import Keyboard, roi_box_to_frame
 
 #! TODO: Use 4 points from user input as a starting quad
 #! TODO: Also add automatic detection, try finding a few quad candidates
@@ -126,17 +128,37 @@ class KeyboardDetector:
         self._roi_M = None           # frame -> ROI
         self._roi_M_inv = None       # ROI -> frame
         self._roi_window_open = False
-        
+        # The locked-in keyboard. While set, detection stops and these keys are drawn instead.
+        self.keyboard: Keyboard | None = None
+
     @property
     def manual_calibration(self):
         return self._manual_calibration
 
+    @property
+    def locked(self) -> bool:
+        return self.keyboard is not None
+
     def set_manual_calibration(self, value):
         if value:
             self.selected_corners = []
+            self.unlock()  # a new quad
             self._manual_calibration = True
         else:
             self._manual_calibration = False
+
+    def lock(self) -> bool:
+        # Freeze the keys detected in the last frame. Returns False if there's nothing to lock.
+        if self.locked:
+            return True
+        if self._roi_M is None or not (self.white_keys or self.black_keys):
+            return False
+        self.keyboard = Keyboard(self._roi_corners, self._roi_M, self._roi_M_inv,
+                                 self.white_keys, self.black_keys)
+        return True
+
+    def unlock(self):
+        self.keyboard = None
         
     def get_selected_quad(self):
         return self.selected_corners
@@ -191,12 +213,6 @@ class KeyboardDetector:
 
         roi = cv2.warpPerspective(frame, self._roi_M, self._roi_size)
         return roi, self._roi_M_inv
-
-    def _roi_box_to_frame(self, box, M_inv) -> np.ndarray:
-        """Map an (x, y, w, h) box from ROI coordinates to a 4-point polygon in the frame."""
-        x, y, w, h = box
-        rect = np.float32([[x, y], [x + w, y], [x + w, y + h], [x, y + h]]).reshape(-1, 1, 2)
-        return np.int32(np.round(cv2.perspectiveTransform(rect, M_inv).reshape(-1, 2)))
 
     def _close_roi_window(self):
         if self._roi_window_open:
@@ -270,12 +286,18 @@ class KeyboardDetector:
                 white_keys.append((xa, 0, xb - xa, H))
         return white_keys
 
-    def draw_keyboard(self, frame: MatLike):
+    def draw_keyboard(self, frame: MatLike, hovered_notes=()):
         """Detect the black and white keys inside the selected quad and draw them on the frame.
+
+        Once locked, nothing is detected anymore: the locked keys are drawn,
+        and the keys in hovered_notes get highlighted.
 
         Call this on a clean frame, before other overlays are drawn on it,
         otherwise text/markers inside the quad get detected as keys.
         """
+        if self.locked:
+            overlay.draw_keyboard(frame, self.keyboard, hovered_notes)
+            return
         if len(self.selected_corners) != 4:
             self.black_keys = []
             self.white_keys = []
@@ -345,8 +367,8 @@ class KeyboardDetector:
         ####### Drawing ########
         ########################
         # ROI boxes -> polygons in the frame.
-        white_polys = [self._roi_box_to_frame(b, M_inv) for b in self.white_keys]
-        black_polys = [self._roi_box_to_frame(b, M_inv) for b in black_keys]
+        white_polys = [roi_box_to_frame(b, M_inv) for b in self.white_keys]
+        black_polys = [roi_box_to_frame(b, M_inv) for b in black_keys]
         quad = np.int32(np.round(self._roi_corners))
 
         # draw outlines: white keys first, so the black keys end up on top of them
