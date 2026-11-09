@@ -9,6 +9,8 @@ HandLandmarker = mp.tasks.vision.HandLandmarker
 HandLandmarkerOptions = mp.tasks.vision.HandLandmarkerOptions
 VisionRunningMode = mp.tasks.vision.RunningMode
 FINGERTIP_LANDMARKS = [4, 8, 12, 16, 20]
+# finger name -> landmark index of its tip
+FINGERTIPS = dict(zip(("thumb", "index", "middle", "ring", "pinky"), FINGERTIP_LANDMARKS))
 LANDMARKER_MODEL_PATH = Path(__file__).with_name("hand_landmarker.task")
 DEFAULT_SETTINGS = (.5, .5, .5)
 
