@@ -1,7 +1,10 @@
 import cv2
 from constants import *
 import numpy as np
+from cv2.typing import MatLike
 
+#! TODO: Use 4 points from user input as a starting quad
+#! TODO: Also add automatic detection, try finding a few quad candidates
 def detector():
     img = cv2.imread("synth.jpeg")
 
@@ -30,12 +33,16 @@ def detector():
     # otherwise it is set to a maximum value.
     max = 255
     threshold = 240
-    ret, thresh = cv2.threshold(gaussian, threshold,max,cv2.THRESH_BINARY)
+    ret, thresh = cv2.threshold(gaussian, threshold, max,cv2.THRESH_BINARY)
     ret, thresh_inv = cv2.threshold(gaussian, threshold, max, cv2.THRESH_BINARY_INV)
     
     # otsu algorithm applies it's own threshold, so this 0 is actually ignored.
     otsu_thresh_val, thresh_otsu = cv2.threshold(gaussian, 0, max, cv2.THRESH_OTSU)
     otsu_thresh_val, thresh_otsu_inv = cv2.threshold(gaussian, 0, max, cv2.THRESH_OTSU | cv2.THRESH_BINARY_INV)
+    
+    ######################################
+    ### Get a ROI - region of interest ###
+    ######################################
     
     # Select a horizontal strip containing the black keys
     H, W = thresh_otsu_inv.shape # image width and height
@@ -44,6 +51,7 @@ def detector():
     x1 = int (W * 0.15)
     x2 = int (W * 0.9)
     roi = thresh_otsu_inv[y1:y2, x1:x2].copy()
+    
     
     ##############################
     ## Morphological transforms ##
@@ -85,7 +93,7 @@ def detector():
             result,
             (x + x1, y + y1),
             (x + x1 + w, y + y1 + h),
-            (0, 255, 0),
+            BGR_GREEN,
             2
         )
 
@@ -103,8 +111,250 @@ def detector():
     cv2.imshow
     cv2.waitKey(0)
     cv2.destroyAllWindows()
-    
+class KeyboardDetector:
+    def __init__(self):
+        self._manual_calibration = False
+        self.selected_corners: list[tuple[float, float]] = []
+        # Black keys found in the last frame, as (x, y, w, h) boxes in ROI coordinates
+        self.black_keys: list[tuple[int, int, int, int]] = []
+        # White keys found in the last frame, as (x, y, w, h) boxes in ROI coordinates
+        self.white_keys: list[tuple[int, int, int, int]] = []
+        # The perspective transform only depends on the corners, so we cache it
+        self._roi_cache_key = None
+        self._roi_corners = None     # ordered corners: TL, TR, BR, BL
+        self._roi_size = None        # (width, height) of the flattened ROI
+        self._roi_M = None           # frame -> ROI
+        self._roi_M_inv = None       # ROI -> frame
+        self._roi_window_open = False
+        
+    @property
+    def manual_calibration(self):
+        return self._manual_calibration
 
+    def set_manual_calibration(self, value):
+        if value:
+            self.selected_corners = []
+            self._manual_calibration = True
+        else:
+            self._manual_calibration = False
+        
+    def get_selected_quad(self):
+        return self.selected_corners
+        
+    def on_mouse(self, event, x, y, flags, param):
+        if not self.manual_calibration:
+            return
+        if (event == cv2.EVENT_LBUTTONDOWN):
+            self.selected_corners.append((x,y))
+            
+            if (len(self.selected_corners) >= 4):
+                self._manual_calibration = False
+                
+    def _ordered_corners(self) -> np.ndarray:
+        """Return the 4 clicked corners as TL, TR, BR, BL - whatever order they were clicked in."""
+        pts = np.array(self.selected_corners, dtype=np.float32)
+        # Sort the points by their angle around the center -> clockwise order on screen
+        # (clockwise because the image y axis points down)
+        center = pts.mean(axis=0)
+        angles = np.arctan2(pts[:, 1] - center[1], pts[:, 0] - center[0])
+        pts = pts[np.argsort(angles)]
+        # Rotate the list so it starts at the top-left corner (smallest x + y)
+        start = int(np.argmin(pts.sum(axis=1)))
+        return np.roll(pts, -start, axis=0)
+
+    def extract_roi(self, frame: MatLike):
+        """
+            Cut the selected quad out of the frame and flatten it ("bird's-eye view").
+            https://stackoverflow.com/questions/75336140/generating-bird-eye-view-of-image-in-opencvpython-without-knowing-exact-positi
+        """
+        if len(self.selected_corners) != 4:
+            raise ValueError("Exactly 4 corners must be selected.")
+
+        # The transform only changes when the corners change -> compute it once
+        cache_key = tuple(self.selected_corners)
+        if cache_key != self._roi_cache_key:
+            corners = self._ordered_corners()
+            if not cv2.isContourConvex(corners.reshape(-1, 1, 2)):
+                raise ValueError("The 4 corners don't form a convex shape.")
+            tl, tr, br, bl = corners
+            # Output size: the longest of each pair of opposite edges keeps the most detail
+            width = int(round(max(np.linalg.norm(tr - tl), np.linalg.norm(br - bl))))
+            height = int(round(max(np.linalg.norm(bl - tl), np.linalg.norm(br - tr))))
+            if width < 20 or height < 20:
+                raise ValueError("The selected area is too small.")
+            dst = np.float32([[0, 0], [width - 1, 0], [width - 1, height - 1], [0, height - 1]])
+            self._roi_M = cv2.getPerspectiveTransform(corners, dst)
+            self._roi_M_inv = np.linalg.inv(self._roi_M)
+            self._roi_corners = corners
+            self._roi_size = (width, height)
+            self._roi_cache_key = cache_key
+
+        roi = cv2.warpPerspective(frame, self._roi_M, self._roi_size)
+        return roi, self._roi_M_inv
+
+    def _roi_box_to_frame(self, box, M_inv) -> np.ndarray:
+        """Map an (x, y, w, h) box from ROI coordinates to a 4-point polygon in the frame."""
+        x, y, w, h = box
+        rect = np.float32([[x, y], [x + w, y], [x + w, y + h], [x, y + h]]).reshape(-1, 1, 2)
+        return np.int32(np.round(cv2.perspectiveTransform(rect, M_inv).reshape(-1, 2)))
+
+    def _close_roi_window(self):
+        if self._roi_window_open:
+            cv2.destroyWindow(ROI_WINDOW)
+            self._roi_window_open = False
+
+    def _detect_white_keys(self, blur: MatLike, black_keys, my: int, key_thresh: float) -> list[tuple[int, int, int, int]]:
+        H, W = blur.shape[:2]
+
+        centers = [x + w / 2 for x, _, w, _ in black_keys]
+        if len(centers) >= 3:
+            key_w = float(np.percentile(np.diff(centers), 25))
+        else:
+            key_w = None
+
+        if black_keys:
+            black_bottom = int(np.median([y + h for _, y, _, h in black_keys]))
+        else:
+            black_bottom = int(0.6 * H) 
+        y_top = black_bottom + max(2, int(0.05 * H))
+        y_bottom = H - my 
+        if y_bottom - y_top < 3:
+            return []
+        strip = blur[y_top:y_bottom, :]
+
+        kw = int(0.5 * key_w) if key_w else W // 60
+        kw = max(5, kw | 1)  # odd and at least 5 px
+        blackhat = cv2.morphologyEx(strip, cv2.MORPH_BLACKHAT, np.ones((1, kw), np.uint8))
+        profile = blackhat.mean(axis=0)
+        profile = cv2.GaussianBlur(profile.reshape(1, -1), (1, 3), 0).ravel()  # smooth it a bit
+
+        min_dist = int(0.6 * key_w) if key_w else max(5, W // 80)
+        base = np.median(profile)
+        noise = base + 4 * np.median(np.abs(profile - base)) + 3  # +3 gray levels: camera noise
+        peaks = []
+        for i in np.argsort(profile)[::-1]:
+            if profile[i] < noise:
+                break
+            if all(abs(i - p) >= min_dist for p in peaks):
+                peaks.append(int(i))
+        if not peaks:
+            return []
+        typical = np.median([profile[p] for p in peaks])
+        gaps = sorted(p for p in peaks if profile[p] >= 0.15 * typical)
+
+        _, bright = cv2.threshold(strip, key_thresh, 255, cv2.THRESH_BINARY)
+        bright_cols = np.flatnonzero((bright > 0).mean(axis=0) > 0.5)
+        if len(bright_cols) == 0:
+            return []
+        left, right = int(bright_cols[0]), int(bright_cols[-1]) + 1
+        edges = [left] + [g for g in gaps if left + min_dist / 2 < g < right - min_dist / 2] + [right]
+
+        widths = np.diff(edges)
+        if len(widths) == 0:
+            return []
+        if key_w is None:
+            key_w = float(np.median(widths))
+        white_keys = []
+        for x_a, x_b in zip(edges[:-1], edges[1:]):
+            w = x_b - x_a
+            if (bright[:, x_a:x_b] > 0).mean() < 0.6:
+                continue
+            # A missed (faint) gap leaves two keys glued together -> split them back in half.
+            # Anything else that doesn't have a key's width is a sliver, the case or the table.
+            n = 2 if abs(w / 2 - key_w) < 0.3 * key_w else 1
+            if not (0.5 * key_w <= w / n <= 1.6 * key_w):
+                continue
+            for j in range(n):
+                xa = x_a + round(j * w / n)
+                xb = x_a + round((j + 1) * w / n)
+                white_keys.append((xa, 0, xb - xa, H))
+        return white_keys
+
+    def draw_keyboard(self, frame: MatLike):
+        """Detect the black and white keys inside the selected quad and draw them on the frame.
+
+        Call this on a clean frame, before other overlays are drawn on it,
+        otherwise text/markers inside the quad get detected as keys.
+        """
+        if len(self.selected_corners) != 4:
+            self.black_keys = []
+            self.white_keys = []
+            self._close_roi_window()
+            return
+        # Cut out a flattened ROI from the user markings
+        try:
+            roi, M_inv = self.extract_roi(frame)
+        except ValueError as err:
+            self.black_keys = []
+            self.white_keys = []
+            self._close_roi_window()
+            cv2.putText(frame, f"{err} Press 'c' to try again.", (20, frame.shape[0] - 20),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.6, BGR_RED, 2, cv2.LINE_AA)
+            return
+        H, W = roi.shape[:2]
+
+        # turn it to grayscale
+        imgray = cv2.cvtColor(roi, cv2.COLOR_BGR2GRAY)
+        # Apply a gaussian blur to remove some noise
+        blur = cv2.GaussianBlur(imgray, (5, 5), 1)
+        # Apply an otsu threshold & invert the image (black keys -> white).
+        otsu_val, thresh_otsu_inv = cv2.threshold(blur, 0, 255, cv2.THRESH_BINARY_INV | cv2.THRESH_OTSU)
+
+        # Clear a thin band along the ROI border. Clicked corners are never pixel-perfect,
+        # and a sliver of dark case/table at the edge glues all black keys into one blob.
+        mx, my = max(2, int(0.01 * W)), max(2, int(0.03 * H))
+        thresh_otsu_inv[:my, :] = 0
+        thresh_otsu_inv[H - my:, :] = 0
+        thresh_otsu_inv[:, :mx] = 0
+        thresh_otsu_inv[:, W - mx:] = 0
+
+        # Opening removes thin lines (gaps between white keys, labels).
+        # Scale the kernel with the rois's width so it works close to and far from the camera.
+        k = max(3, W // 185)
+        opening_inv = cv2.morphologyEx(thresh_otsu_inv, cv2.MORPH_OPEN, np.ones((k, k), np.uint8))
+
+        # Find the contours, which should be exactly the black keys
+        contours, _ = cv2.findContours(opening_inv, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+
+        black_keys = []
+        for cnt in contours:
+            x, y, w, h = cv2.boundingRect(cnt)
+            area = cv2.contourArea(cnt)
+            # reject short objects
+            if h < 0.35 * H:
+                continue
+            # reject wide objects
+            if w > 0.15 * W:
+                continue
+            # Reject objects that aren't tall and narrow
+            if h < 1.3 * w:
+                continue
+            # Reject objects that don't fill their bounding rectangle
+            if area < 0.5 * w * h:
+                continue
+            # Black keys start at the back edge: give back the strip we cleared above
+            if y <= my + 1:
+                h += y
+                y = 0
+            black_keys.append((x, y, w, h))
+        black_keys.sort(key=lambda key: key[0])  # left to right
+        self.black_keys = black_keys
+        self.white_keys = self._detect_white_keys(blur, black_keys, my, otsu_val)
+
+        ########################
+        ####### Drawing ########
+        ########################
+        # ROI boxes -> polygons in the frame.
+        white_polys = [self._roi_box_to_frame(b, M_inv) for b in self.white_keys]
+        black_polys = [self._roi_box_to_frame(b, M_inv) for b in black_keys]
+        quad = np.int32(np.round(self._roi_corners))
+
+        # draw outlines: white keys first, so the black keys end up on top of them
+        cv2.polylines(frame, [quad], True, BGR_WILLOW, 2, cv2.LINE_AA)
+        cv2.polylines(frame, white_polys, True, BGR_BLUE, 2, cv2.LINE_AA)
+        cv2.polylines(frame, black_polys, True, BGR_GREEN, 2, cv2.LINE_AA)
+
+        
 #####################################################
 # # Read video from file system/camera
 # video = cv2.VideoCapture(0)

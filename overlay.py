@@ -3,7 +3,7 @@
 import cv2
 import numpy as np
 
-from constants import BGR_BLACK, BGR_BLUE, BGR_GREEN, BGR_RED
+from constants import *
 from hand_detection import FINGERTIP_LANDMARKS, HAND_CONNECTIONS
 
 FONT = cv2.FONT_HERSHEY_SIMPLEX
@@ -67,7 +67,7 @@ def draw_keyboard(frame, keyboard, hovered_notes=(), sounding_notes=()):
         cv2.polylines(frame, [polys[key.note]], True, color, 1, cv2.LINE_AA)
     cv2.polylines(frame, [np.int32(keyboard.corners)], True, (0, 255, 0), 2, cv2.LINE_AA)
 
-def draw_text_lines(frame, lines, origin=(10, 28), scale=0.6, color=(255, 255, 255)):
+def draw_text_lines(frame, lines, origin=(10, 28), scale=.7, color=BGR_WILLOW):
     x, y = origin
     for line in lines:
         if not line:
@@ -95,9 +95,11 @@ def draw_rec_indicator(frame, elapsed):
                 (0, 0, 255), 2, cv2.LINE_AA)
 
 def draw_calibration_points(frame, points):
+    if points is None or len(points) == 0:
+        return
     for i, (x, y) in enumerate(points):
-        cv2.circle(frame, (int(x), int(y)), 7, (0, 0, 255), -1)
-        cv2.putText(frame, str(i + 1), (int(x) + 10, int(y) - 10), FONT, 0.7,
-                    (0, 0, 255), 2, cv2.LINE_AA)
+        cv2.circle(frame, (x,y), 7, BGR_PURPLE, -1)
+        cv2.putText(frame, str(i + 1), (x + 10, y - 10), FONT, 0.7, BGR_PURPLE, 2, cv2.LINE_AA)
     if len(points) > 1:
-        cv2.polylines(frame, [np.int32(points)], len(points) == 4, (0, 0, 255), 2)
+        cv2.polylines(frame, [np.int32(points)], len(points) == 4, BGR_PURPLE, 2)
+        
