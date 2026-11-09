@@ -62,10 +62,11 @@ def draw_keyboard(frame, keyboard, hovered_notes=(), sounding_notes=()):
     overlay[untouched_black > 0] = frame[untouched_black > 0]
     cv2.addWeighted(overlay, 0.45, frame, 0.55, 0, dst=frame)
 
-    for key in keyboard.keys:
-        color = (60, 60, 60) if key.is_black else (200, 200, 200)
-        cv2.polylines(frame, [polys[key.note]], True, color, 1, cv2.LINE_AA)
-    cv2.polylines(frame, [np.int32(keyboard.corners)], True, (0, 255, 0), 2, cv2.LINE_AA)
+    # Same colors as the live detection; black keys last so their outlines end up on top
+    cv2.polylines(frame, [np.int32(keyboard.corners)], True, BGR_WILLOW, 2, cv2.LINE_AA)
+    for key in sorted(keyboard.keys, key=lambda k: k.is_black):
+        color = BGR_GREEN if key.is_black else BGR_BLUE
+        cv2.polylines(frame, [polys[key.note]], True, color, 2, cv2.LINE_AA)
 
 def draw_text_lines(frame, lines, origin=(10, 28), scale=.7, color=BGR_WILLOW):
     x, y = origin
