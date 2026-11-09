@@ -23,5 +23,6 @@ HELP = [
     "d: detect keyboard   c: calibrate by clicking 4 corners",
     "m: hover/motion mode   i: index-only / all fingers",
     "r: record MIDI   k: chord mode   f: mirror view",
+    "l: lock/unlock the detected keys",
     "h: hide help   q: quit",
 ]
